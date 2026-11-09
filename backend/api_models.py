@@ -113,6 +113,11 @@ class DocumentAttachment(ContractModel):
     summary_metadata: dict[str, Any] = Field(default_factory=dict)
 
 
+class AccountReviewBinding(ContractModel):
+    application_ref: str = Field(pattern=r"^VSA-[A-F0-9]{16}$")
+    review_digest: str = Field(pattern=r"^[a-f0-9]{64}$")
+
+
 class AssistantTurnRequest(ContractModel):
     conversation_id: UUID | None = None
     # Optional owner-scoped reference to an assessment returned earlier by
@@ -126,6 +131,7 @@ class AssistantTurnRequest(ContractModel):
     language_hint: LanguageHint = "auto"
     response_language: LanguageCode | None = None
     attachments: list[DocumentAttachment] = Field(default_factory=list)
+    account_review: AccountReviewBinding | None = None
 
     @model_validator(mode="after")
     def validate_input_source(self):

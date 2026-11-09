@@ -130,7 +130,11 @@ DEFAULTS = {
     "account_application_selected_ref": None,
     "account_application_last_submitted": None,
     "pending_navigation": None,
-    "wake_word_enabled": True,
+    "wake_word_enabled": False,
+    "wake_recognition_mode": "on_device",
+    "wake_browser_consent": False,
+    "voice_component_response": None,
+    "voice_component_event_id": None,
     "wake_activated": False,
 }
 
@@ -203,6 +207,13 @@ def bind_pending_scam_assessment(state, assessment_id, conversation_id):
 
 
 def reset_conversation_state(state):
+    for key in list(state):
+        if key.startswith(("kyc_chat_", "chat_application_", "account_chat_", "account_review_for_", "voice_component_", "active_voice_component_")):
+            if key in {"voice_component_processed_ids", "voice_component_event_id"}:
+                continue
+            state.pop(key, None)
+    state["wake_word_enabled"] = False
+    state.pop("voice_retry_audio", None)
     state["conversation_id"] = None
     state["conversation_messages"] = []
     state["loaded_conversation_id"] = None
@@ -231,6 +242,9 @@ def sign_out(state, api_factory=VaaniShieldAPI):
     state["conversation_list_cursor"] = None
     state["conversation_list_has_more"] = False
     reset_conversation_state(state)
+    state.pop("voice_component_processed_ids", None)
+    state.pop("voice_component_event_id", None)
+    state.pop("voice_diagnostics", None)
     clear_support_ticket_cache(state)
     clear_transaction_risk_cache(state)
     clear_investigation_cache(state)

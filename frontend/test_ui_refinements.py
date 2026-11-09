@@ -81,13 +81,13 @@ class TestUIRefinements(unittest.TestCase):
         """Verify wake-word component contains exact phrase and permission protection."""
         content = self.wake_content
 
-        # Exact welcome phrase in f-string template
-        self.assertIn("Welcome back, ${{customerName}}! What can I help you with?", content)
+        self.assertIn('"Hey Vaani"', content)
+        self.assertIn('tab is hidden', content)
+        script = Path("frontend/components/voice_capture/voice.js").read_text(encoding="utf-8")
+        self.assertIn("not-allowed", script)
+        self.assertIn("this.stop();", script)
+        self.assertIn("processLocally = true", script)
 
-        # Permission denial handling without endless restart loop
-        self.assertIn("permissionBlocked", content)
-        self.assertIn("not-allowed", content)
-        self.assertIn("Stop restart loop if microphone permission is denied", content)
 
 
 if __name__ == "__main__":

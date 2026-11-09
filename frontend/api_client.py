@@ -131,6 +131,9 @@ class VaaniShieldAPI:
 
         if response.status_code not in expected:
             payload = self._read_payload(response)
+            error_code = response.headers.get("X-Vaani-Error-Code")
+            if isinstance(payload, dict) and isinstance(error_code, str) and error_code:
+                payload["error_code"] = error_code
             # Only API-authored detail messages are surfaced. Transport exception
             # strings and request headers (including cookies) are never included.
             detail = payload.get("detail") if isinstance(payload, dict) else None

@@ -224,7 +224,8 @@ class TestCopilotUXAndComposer(unittest.TestCase):
         # The recorder itself is the single microphone control in the composer.
         button_keys = [c[1].get("key") for c in st.button.call_args_list if c[1].get("key")]
         self.assertNotIn("copilot_mic_toggle_btn", button_keys)
-        self.assertTrue(any(c[1].get("key") == "copilot-audio-0" for c in st.audio_input.call_args_list))
+        st.audio_input.assert_not_called()
+        self.assertIn("c_plus, c_input, c_mic, c_send", __import__("inspect").getsource(render_assistant))
 
         # Verify multiline text area placeholder is 'Message Vaani...'
         text_area_calls = st.text_area.call_args_list
@@ -254,8 +255,8 @@ class TestCopilotUXAndComposer(unittest.TestCase):
 
         button_keys = [c[1].get("key") for c in st.button.call_args_list if c[1].get("key")]
         self.assertNotIn("copilot_mic_toggle_btn", button_keys)
-        st.audio_input.assert_called_once()
-        self.assertEqual(st.audio_input.call_args.kwargs["key"], "copilot-audio-0")
+        st.audio_input.assert_not_called()
+        self.assertIn("voice_event = render_compact_voice(state)", __import__("inspect").getsource(render_assistant))
 
     def test_new_conversation_advances_popover_key_to_dismiss_menu(self):
         from frontend.pages.assistant import render as render_assistant

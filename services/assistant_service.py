@@ -31,7 +31,7 @@ from backend.api_models import (
 from services import conversation_service
 from services.account_application_assistant import (
     classify_account_intent,
-    run_account_application_turn,
+    run_account_application_turn, redact_application_history,
 )
 from services.agent_tools import ACCOUNT_APPLICATION_TOOL_NAMES, execute_tool
 from services.agent_tools import get_available_tools
@@ -237,6 +237,7 @@ def _redact_memory_text(value, limit=480):
 
 def _memory_summary_sources(turns):
     """Build bounded summary input without copying banking results or support proposals."""
+    turns = redact_application_history(turns)
     sources = []
     banking_topics = set()
     rows = {int(item.get("sequence_number", 0)): item for item in turns}
@@ -2738,7 +2739,7 @@ class AssistantOrchestrator:
         self, principal, conversation_id, response_language, input_text,
         correlation_id, *, assessment_reference=None, input_languages=(),
         is_code_mixed=False, source_mode="typed_message", original_turn_id=None,
-        doc_context="", has_attachments=False,
+        doc_context="", has_attachments=False, account_review=None,
     ):
         # Explicit ticket creation takes precedence over contextual banking
         # follow-up routing, including lookups inherited from earlier turns.
@@ -2747,6 +2748,19 @@ class AssistantOrchestrator:
         support_create_active = (
             _is_support_create_request(input_text) and not failed_transaction_request
         )
+        if not has_attachments and re.fullmatch(r"hey[ ,.!-]+vaa?ni[.!]?", input_text.strip(), re.I):
+            return "Yes, how can I help you?", [], None, None, None
+        # Deterministic application turns precede provider calls and memory summarization.
+        if not has_attachments and assessment_reference is None and not _has_scam_intent(input_text):
+            from services.support_draft_service import get_active_draft
+            account_turn = run_account_application_turn(
+                principal, input_text, response_language, execute_tool,
+                support_create_active=support_create_active or bool(get_active_draft(principal.customer_key, str(conversation_id))),
+                history=conversation_service.get_recent_conversation_turns(principal, conversation_id, limit=4),
+                confirmation=account_review, input_mode="speech" if source_mode == "voice_call" else "text",
+            )
+            if account_turn is not None:
+                return account_turn[0], account_turn[1], None, None, None
         explicit_scam_request = _is_explicit_scam_request(input_text)
         scam_source_text = _extract_explicit_scam_content(input_text)
         required_tools = (
@@ -2808,6 +2822,7 @@ class AssistantOrchestrator:
         history = conversation_service.get_recent_conversation_turns(
             principal, conversation_id, limit=_history_turn_limit()
         )
+        history = redact_application_history(history)
         historical_scam_reference = re.search(
             r"\b(?:why|explain|tell me why)\b.{0,90}\b(?:first|previous|earlier|original|that|the)\s+(?:suspicious\s+|scam\s+)?message\b|"
             r"\b(?:first|previous|earlier|original)\s+(?:suspicious\s+|scam\s+)?message\b.{0,90}\b(?:risky|suspicious|scam|unsafe|dangerous)\b",
@@ -3204,7 +3219,7 @@ class AssistantOrchestrator:
         ):
             account_turn = run_account_application_turn(
                 principal, input_text, response_language, execute_tool,
-                support_create_active=support_create_active,
+                support_create_active=support_create_active or has_attachments,
             )
             if account_turn is not None:
                 account_text, account_results = account_turn
@@ -3596,6 +3611,33 @@ class AssistantOrchestrator:
                     _trace_event(correlation_id, "final_response_generated", provider="investigation_service", guarded=True, response_length=len(final_text))
                     return final_text, all_results, scam_assessment, None, None
                 if response.text:
+                    account_status_context = bool(re.search(
+                        r"\b(?:application|kyc|documents?|aadhaar|pan)\b|आवेदन|दस्तावेज|खाता|ಅರ್ಜಿ|ದಾಖಲೆ|ಖಾತೆ",
+                        input_text, re.I,
+                    )) or (
+                        len(input_text.split()) <= 10
+                        and bool(re.search(r"\b(?:it|they|them|those|these|done|ready|complete)\b", input_text, re.I))
+                        and any(re.search(r"application|document checklist|kyc", str(item.get("assistant_response_text") or ""), re.I) for item in history[-4:])
+                    )
+                    status_claim = bool(re.search(
+                        r"\b(?:received|uploaded|verified|approved|rejected|submitted|opened|activated|processed|complete|completed|ready|done|notify|notified|notification|forwarded|sent|accepted|confirmed|created|issued|emailed|reviewed|all set)\b|"
+                        r"सत्यापित|जमा|खुल|अपलोड|सूचित|पूर्ण|ಪರಿಶೀಲ|ಸಲ್ಲಿಸ|ತೆರೆದ|ಅಪ್ಲೋಡ್|ಪೂರ್ಣ",
+                        response.text, re.I,
+                    ))
+                    # An unrecognized application-status turn must fail closed;
+                    # free-form model text is not authoritative evidence.
+                    if (account_status_context and (not has_attachments and not support_create_active or status_claim)) or re.search(
+                        r"\b(?:documents?|kyc|aadhaar|pan)\b.{0,90}\b(?:received|uploaded|verified|approved|rejected|submitted|processed)\b|"
+                        r"\b(?:all|your|required)\b.{0,35}\bdocuments?\b.{0,45}\b(?:received|uploaded|verified|approved|rejected|submitted)\b|"
+                        r"\b(?:application|account)\b.{0,70}\b(?:submitted|opened|approved|activated)\b|"
+                        r"\b(?:submit|process|notify)\b.{0,65}\b(?:application|documents?|account)\b",
+                        response.text, re.I | re.S,
+                    ):
+                        return (
+                            "I cannot confirm document verification, application submission, or account opening from that response. "
+                            "Ask me to check your application documents or status. Please submit personally on Review & Submit.",
+                            all_results, scam_assessment, None, None,
+                        )
                     final_text, guarded = self._guard_balance_response(
                         response.text, required_tools, all_results, response_language
                     )
@@ -4914,6 +4956,7 @@ class AssistantOrchestrator:
                     original_turn_id=user_turn["turn_id"],
                     doc_context=doc_context,
                     has_attachments=has_attachments,
+                    account_review=request.account_review,
                 )
                 transaction_risk_assessment = _transaction_risk_assessment_from_results(
                     tool_results
@@ -4964,7 +5007,9 @@ class AssistantOrchestrator:
             account_turn = (
                 run_account_application_turn(
                     principal, input_text, response_language, execute_tool,
-                    support_create_active=_is_support_create_request(input_text),
+                    support_create_active=_is_support_create_request(input_text) or has_attachments,
+                    history=conversation_service.get_recent_conversation_turns(principal, conversation_id, limit=4),
+                    confirmation=request.account_review, input_mode=request.input_mode,
                 )
                 if request.scam_assessment_id is None and not _has_scam_intent(input_text)
                 else None

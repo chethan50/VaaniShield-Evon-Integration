@@ -20,6 +20,7 @@ from services.account_application_service import (
     ApplicationValidationError,
     has_active_application,
 )
+from services import account_application_service as applications
 
 logger = logging.getLogger(__name__)
 
@@ -72,9 +73,11 @@ _REMAINING_EN = re.compile(
 )
 _REMAINING_BLOCK = re.compile(r"\b(?:balance|budget|tenure|spend\w*|expenses?)\b")
 _UPLOAD_EN = re.compile(
-    r"\b(?:upload|attach)\b[^.?!]{0,50}\b(?:aadhaar|aadhar|pan|kyc|documents?|address\s+proof|proof)\b|"
-    r"\b(?:aadhaar|aadhar|pan(?:\s+card)?|kyc|documents?|address\s+proof)\b[^.?!]{0,50}\b(?:upload|attach|where)\b|"
-    r"\bwhere\b[^.?!]{0,40}\b(?:upload|submit\s+my\s+(?:document|aadhaar|pan))"
+    r"\b(?:upload(?:ed)?|attach(?:ed)?)\b[^.?!]{0,50}\b(?:aadhaar|aadhar|pan|kyc|documents?|address\s+proof|proof)\b|"
+    r"\b(?:aadhaar|aadhar|pan(?:\s+card)?|kyc|documents?|address\s+proof)\b[^.?!]{0,50}\b(?:upload(?:ed)?|attach(?:ed)?|where)\b|"
+    r"\bwhere\b[^.?!]{0,40}\b(?:upload|submit\s+my\s+(?:document|aadhaar|pan))|"
+    r"\b(?:check|status|verified|verify|missing|received|complete|ready)\b[^.?!]{0,50}\b(?:documents?|kyc|aadhaar|pan|address\s+proof)\b|"
+    r"\b(?:documents?|kyc|aadhaar|pan|address\s+proof)\b[^.?!]{0,50}\b(?:status|verified|verify|missing|received|complete|ready)\b"
 )
 _REVIEW_EN = re.compile(
     r"\bsubmit\b|\breview\b[^.?!]{0,30}\b(?:application|details|summary)\b|"
@@ -169,6 +172,8 @@ def classify_account_intent(text):
         any(word in normalized for word in ("अपलोड", "ಅಪ್ಲೋಡ್", "ಅಪ್\u200cಲೋಡ್"))
         and any(word in normalized for word in ("आधार", "पैन", "दस्तावेज", "ಆಧಾರ್", "ಪ್ಯಾನ್", "ದಾಖಲೆ"))
     ):
+        return {"action": "UPLOAD_HELP", "needs": None, "args": {}}
+    if re.search(r"\b(?:i\s+(?:have|got|sent|provided)|my|all\s+(?:my|the))\b[^.?!]{0,35}\b(?:documents?|kyc|aadhaar|pan|address\s+proof)\b", normalized):
         return {"action": "UPLOAD_HELP", "needs": "active", "args": {}}
     if _REVIEW_EN.search(normalized) or any(
         word in normalized for word in ("सबमिट", "जमा करें", "जमा कर", "समीक्षा", "ಸಲ್ಲಿಸ", "ಸಬ್ಮಿಟ್", "ಪರಿಶೀಲಿಸ")
@@ -500,11 +505,20 @@ def _next_step_text(view, language):
     if step == "details":
         fields = [name for name in validation["missing_fields"] if name != "account_type"]
         if fields:
+            if language == "en-IN":
+                field = fields[0]
+                hint = " (YYYY-MM-DD)" if field == "date_of_birth" else ""
+                return f"Please tell me your {applications.FIELD_LABELS[field].lower()}{hint}. You can type or speak it."
             return _t("next_details", language, fields=_labels(_FIELD_LABEL, fields, language))
         return _t("next_details_fix", language)
     if step == "documents":
+        if language == "en-IN":
+            return ("Please upload " + _labels(_DOCUMENT_LABEL, validation["missing_documents"], language)
+                    + " using + > KYC document in this conversation. Uploads are not identity verification.")
         return _t("next_documents", language, docs=_labels(_DOCUMENT_LABEL, validation["missing_documents"], language))
     if step == "review":
+        if not _ready_for_review(view):
+            return "I cannot confirm that the application is ready. Please check the required documents."
         return _t("next_review", language)
     return _t("next_submitted", language)
 
@@ -527,14 +541,120 @@ def _navigation(view):
     subfeature = _STEP_NAVIGATION.get(step)
     if subfeature is None:
         return None
-    return {"target": "account_services", "subfeature": subfeature, "step": step}
+    nav = {"target": "account_services", "subfeature": subfeature, "step": step}
+    if step == "review":
+        if not _ready_for_review(view):
+            return None
+        nav["application_ref"] = view["application_ref"]
+    return nav
+
+
+def _ready_for_review(view):
+    validation = view.get("validation") or {}
+    if not validation.get("is_valid") or validation.get("missing_documents"):
+        return False
+    required = applications.required_documents(view.get("account_type"))
+    documents = view.get("documents")
+    if not required or not isinstance(documents, list):
+        return False
+    by_type = {doc.get("document_type"): doc for doc in documents if isinstance(doc, dict)}
+    return all(
+        kind in by_type and by_type[kind].get("uploaded")
+        and str(by_type[kind].get("verification_status") or "").upper() != "REJECTED"
+        for kind in required
+    )
 
 
 # --------------------------------------------------------------------------
 # Turn execution
 # --------------------------------------------------------------------------
 
-def run_account_application_turn(principal, text, language, execute, *, support_create_active=False):
+_FIELD_INPUTS = {
+    "date_of_birth": r"(?:date of birth|birth date|dob)",
+    "phone": r"(?:phone(?: number)?|mobile(?: number)?)",
+    "address_line": r"(?:address|street address)",
+    "city": r"city", "state": r"state", "postal_code": r"(?:pin(?: code)?|postal code|postcode)",
+    "nominee_name": r"nominee name", "nominee_relationship": r"nominee relationship",
+}
+
+
+def redact_application_history(turns):
+    """Keep personal slot values in owner-only history, out of later model context."""
+    result = []
+    previous_reply = ""
+    for turn in turns:
+        item = dict(turn)
+        if item.get("role") == "assistant":
+            previous_reply = item.get("assistant_response_text") or ""
+        else:
+            text = item.get("user_text_or_transcript") or ""
+            labeled = any(re.search(r"(?:^|[;\n])\s*(?:my\s+)?" + pattern + r"\s*(?::|is\b)", text, re.I) for pattern in _FIELD_INPUTS.values())
+            slot_reply = "Please tell me your " in previous_reply and not re.search(
+                r"\b(?:show|check|balance|transactions?|loans?|cards?|scam|support|ticket|submit|cancel|stop|open)\b|\?", text, re.I,
+            )
+            if labeled or slot_reply:
+                item["user_text_or_transcript"] = "[Customer-provided application fields omitted from model context]"
+        result.append(item)
+    return result
+
+
+def _save_conversational_fields(principal, text, language, history):
+    """Parse user-authored fields only; never infer identity from attachments/LLM output."""
+    changes = {}
+    implicit = False
+    for piece in re.split(r"[;\n]", text.strip()):
+        for field, pattern in _FIELD_INPUTS.items():
+            match = re.fullmatch(r"(?:my\s+)?" + pattern + r"\s*(?::|is\b)\s*(.+)", piece.strip(), re.I)
+            if match:
+                changes[field] = match.group(1).strip()
+                break
+        else:
+            changes = {}
+            break
+    if not changes and history:
+        previous = next((turn for turn in reversed(history) if turn.get("role") == "assistant"), {})
+        prompt = previous.get("assistant_response_text") or ""
+        for field in _FIELD_INPUTS:
+            label = applications.FIELD_LABELS[field].lower()
+            if f"Please tell me your {label}" in prompt and not classify_account_intent(text):
+                if not re.search(r"\b(?:yes|no|show|check|balance|transactions?|loans?|cards?|scam|support|ticket|submit|cancel|stop|open)\b|\?", text, re.I):
+                    changes[field] = text.strip()
+                    implicit = True
+                break
+    if not changes:
+        return None
+    try:
+        view = applications.get_current_application(principal)
+    except ApplicationNotFound:
+        return None
+    if implicit and not set(changes).issubset(view["validation"]["missing_fields"]):
+        return "That field is already saved. " + _next_step_text(view, language), []
+    if "date_of_birth" in changes:
+        from datetime import datetime
+        value = re.sub(r"(\d)(st|nd|rd|th)\b", r"\1", changes["date_of_birth"], flags=re.I)
+        for fmt in ("%d %B %Y", "%B %d %Y", "%d %b %Y"):
+            try:
+                changes["date_of_birth"] = datetime.strptime(value.replace(",", ""), fmt).date().isoformat()
+                break
+            except ValueError:
+                pass
+    if "nominee_relationship" in changes:
+        changes["nominee_relationship"] = changes["nominee_relationship"].upper().replace(" ", "_")
+    try:
+        updated = applications.update_application(principal, view["application_ref"], changes, include_personal=False)
+    except ApplicationValidationError as exc:
+        return " ".join(item["message"] for item in exc.errors), []
+    result = ToolExecutionResult(
+        tool_call_id=uuid4(), tool_name="update_account_application", status="succeeded",
+        summary="Saved customer-provided application details.", data={"result": updated},
+    )
+    nav = _navigation(updated)
+    if nav:
+        result.data["ui_navigation"] = nav
+    return "Your application details are saved. " + _next_step_text(updated, language), [result]
+
+
+def run_account_application_turn(principal, text, language, execute, *, support_create_active=False, history=(), confirmation=None, input_mode="text"):
     """Run one account-opening turn; return ``(text, tool_results)`` or None.
 
     ``execute`` is the approved dispatcher (``execute_tool``). Returning None
@@ -542,7 +662,36 @@ def run_account_application_turn(principal, text, language, execute, *, support_
     """
     if support_create_active:
         return None
+    if re.fullmatch(r"i confirm[,:]? submit my application[.!]?", text.strip(), re.I):
+        return "Please review and submit your application personally on the Review & Submit page. No submission was made here.", []
+    previous = next((item.get("assistant_response_text") or "" for item in reversed(history) if item.get("role") == "assistant"), "")
+    pending = re.search(r"Unfinished application (VSA-[A-F0-9]{16}) ", previous)
+    if pending and re.fullmatch(r"(?:yes|yes please|yes,? resume(?: it)?|resume|resume it|continue|continue it|हाँ|हां|ಹೌದು|no(?:[ ,].*)?|decline|नहीं|ಇಲ್ಲ)[.!]?", text.strip(), re.I):
+        if re.match(r"(?:no\b|decline\b|नहीं|ಇಲ್ಲ)", text.strip(), re.I):
+            return "Your existing draft remains unchanged. Only one unfinished application is currently permitted. You can resume it later.", []
+        try:
+            view = applications.get_current_application(principal, include_personal=False)
+            if view["application_ref"] != pending.group(1):
+                return "The application has changed. Please ask to open an account again.", []
+            return "Resuming your existing application. " + _next_step_text(view, language), []
+        except (ApplicationError, ApplicationNotFound, PermissionError):
+            return "The application is unavailable. Please ask to open an account again.", []
+    if pending and (classify_account_intent(text) or any(
+        re.search(r"(?:^|[;\n])\s*(?:my\s+)?" + pattern + r"\s*(?::|is\b)", text, re.I)
+        for pattern in _FIELD_INPUTS.values()
+    )):
+        return previous + " Please say yes to resume it or no to leave it unchanged.", []
+    field_turn = _save_conversational_fields(principal, text, language, history)
+    if field_turn is not None:
+        return field_turn
     intent = classify_account_intent(text)
+    if intent is None and re.search(r"document|kyc|aadhaar|pan|proof", previous, re.I) and (
+        re.search(r"\b(?:uploaded|attached)\s+(?:them|those|these|it)\b", text, re.I)
+        or re.fullmatch(r"(?:okay[, ]*)?(?:they(?:'re| are) (?:done|ready|uploaded|complete)|(?:are|were) (?:they|those|these) (?:done|ready|received|verified|complete)|all done|done)[.!?]?", text.strip(), re.I)
+    ):
+        intent = {"action": "UPLOAD_HELP", "needs": None, "args": {}}
+    if intent is None and re.fullmatch(r"(?:resume|continue)(?: my)?(?: application)?[.!]?", text.strip(), re.I):
+        intent = {"action": "OPEN", "needs": "active", "args": {}}
     if intent is None:
         return None
     action, needs, args = intent["action"], intent["needs"], dict(intent["args"])
@@ -608,12 +757,26 @@ def run_account_application_turn(principal, text, language, execute, *, support_
         return (_t("options", lang) if data is not None else error_text()), results
 
     if action == "OPEN":
+        try:
+            existing = applications.get_current_application(principal, include_personal=False)
+        except ApplicationNotFound:
+            existing = None
+        except (ApplicationError, PermissionError):
+            return _t("error", lang), results
+        if existing:
+            label = existing.get("account_type_label") or "account type not selected"
+            status = "awaiting final review" if existing.get("status") == "PENDING_CONFIRMATION" else "draft"
+            return (f"Unfinished application {existing['application_ref']} ({label}; {status}) exists. "
+                    "Would you like to resume it? Only one unfinished application is permitted; "
+                    "a separate application cannot be started until this one is completed."), results
         view = call("start_account_application", args)
         if view is None:
             return error_text(), results
         attach_navigation(view)
         if view.get("resumed"):
-            lead = _t("resumed", lang)
+            label = view.get("account_type_label") or "account type not selected"
+            return (f"Unfinished application {view['application_ref']} ({label}) exists. Would you like to resume it? "
+                    "Only one unfinished application is permitted."), results
         elif view.get("account_type"):
             lead = _t("started", lang, type=_TYPE_LABEL[view["account_type"]][lang])
         else:
@@ -622,6 +785,14 @@ def run_account_application_turn(principal, text, language, execute, *, support_
         return f"{lead} {follow}", results
 
     if action in {"SELECT_TYPE", "SET_EMPLOYMENT"}:
+        if action == "SELECT_TYPE":
+            try:
+                existing = applications.get_current_application(principal, include_personal=False)
+            except (ApplicationError, ApplicationNotFound, PermissionError):
+                return error_text(), results
+            if existing.get("account_type") and existing["account_type"] != args["account_type"]:
+                return (f"Your existing {existing.get('account_type_label') or 'account'} application remains unchanged. "
+                        "Only one unfinished application is permitted. Review its details on Open New Account before making any changes."), results
         view = call("update_account_application", args)
         if view is None:
             return error_text(), results
@@ -644,28 +815,58 @@ def run_account_application_turn(principal, text, language, execute, *, support_
     if action == "UPLOAD_HELP":
         data = call("get_application_document_status", {})
         if data is None:
-            return error_text(), results
+            return "I could not check the document checklist. Please try again.", results
         if data.get("account_type") is None:
             return _t("upload_needs_type", lang), results
-        missing = data.get("missing_documents") or []
-        status = (
-            _t("upload_still", lang, docs=_labels(_DOCUMENT_LABEL, missing, lang)) if missing
-            else _t("upload_done", lang)
-        )
-        results[-1].data = {
-            **(results[-1].data or {}),
-            "ui_navigation": {"target": "account_services", "subfeature": "KYC Documents", "step": "documents"},
-        }
-        return _t("upload_help", lang, status=status), results
+        documents = data.get("documents")
+        if not isinstance(documents, list) or not isinstance(data.get("missing_documents"), list):
+            return "I could not check the document checklist. Please try again.", results
+        descriptions = []
+        for doc in documents:
+            if not isinstance(doc, dict) or not doc.get("required"):
+                continue
+            label = doc.get("label") or "Required document"
+            verification = str(doc.get("verification_status") or "UNKNOWN").upper()
+            if verification == "REJECTED":
+                status = "rejected; upload a replacement"
+            elif not doc.get("uploaded") or doc.get("document_type") in data["missing_documents"]:
+                status = "missing"
+            elif verification == "VERIFIED":
+                status = "uploaded and verified"
+            elif verification in {"PENDING", "PENDING_VERIFICATION"}:
+                status = "uploaded; verification pending"
+            else:
+                status = "uploaded; not verified"
+            descriptions.append(f"{label}: {status}")
+        if not descriptions:
+            return "I could not check the required document checklist. Please try again.", results
+        results[-1].data = {**(results[-1].data or {}), "ui_navigation": {"target": "account_services", "subfeature": "KYC Documents", "step": "documents"}}
+        review = call("validate_account_application", {})
+        suffix = " Uploading does not verify identity or submit an application."
+        if review is None:
+            suffix += " I could not check whether the application is ready for review."
+        elif _ready_for_review(review) and not data["missing_documents"] and not any(
+            d.get("required") and str(d.get("verification_status") or "").upper() == "REJECTED"
+            for d in documents if isinstance(d, dict)
+        ):
+            results[-1].data = {**(results[-1].data or {}), "ui_navigation": {
+                "target": "account_services", "subfeature": "Review & Submit", "step": "review",
+                "application_ref": review["application_ref"],
+            }}
+            suffix += " The application is ready for your review on Review & Submit."
+        return "Document checklist: " + "; ".join(descriptions) + "." + suffix, results
 
     if action == "REVIEW":
-        data = call("prepare_account_application_submission", {})
-        if data is None:
-            return error_text(), results
-        view = data["application"]
-        attach_navigation(view)
-        if data.get("ready"):
-            return _t("next_review", lang), results
+        view = call("validate_account_application", {})
+        if view is None:
+            return "I could not check the application or document checklist. Please try again.", results
+        if _ready_for_review(view):
+            results[-1].data = {**(results[-1].data or {}), "ui_navigation": {
+                "target": "account_services", "subfeature": "Review & Submit", "step": "review",
+                "application_ref": view["application_ref"],
+            }}
+            return (f"Application {view['application_ref']} is ready for your review. "
+                    "Uploads are not identity verification. Please review and submit personally on Review & Submit."), results
         return f"{_t('not_ready', lang)} {_missing_text(view, lang)} {_next_step_text(view, lang)}".replace("  ", " "), results
 
     if action == "SAVE_LATER":

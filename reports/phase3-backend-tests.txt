@@ -1,0 +1,295 @@
+C:\Users\cc402\OneDrive\Desktop\vaanishield\.venv\Lib\site-packages\fastapi\testclient.py:1: StarletteDeprecationWarning: Using `httpx` with `starlette.testclient` is deprecated; install `httpx2` instead.
+  from starlette.testclient import TestClient as TestClient  # noqa
+Read-only banking tool failed (get_loan_details): RuntimeError
+Gemini request failed exception_class=ServerError http_status=503 provider_error_code=UNAVAILABLE request_id=None retry_after=None retry_delay=None provider_detail_types=- invalid_fields=- provider_error_category=unclassified_provider_error provider_error_field=- provider_message=Provider rejected the request (message redacted). model=gemini-2.5-flash sdk_version=2.34.0 request_stage=follow_up request_schema={content_count=3 roles=user,model,user parts=text;function_call:unregistered;function_response:unregistered declaration_count=0 tools=none}
+Gemini request failed exception_class=ServerError http_status=503 provider_error_code=UNAVAILABLE request_id=None retry_after=None retry_delay=None provider_detail_types=- invalid_fields=- provider_error_category=unclassified_provider_error provider_error_field=- provider_message=Provider rejected the request (message redacted). model=gemini-2.5-flash sdk_version=2.34.0 request_stage=follow_up request_schema={content_count=3 roles=user,model,user parts=text;function_call:unregistered;function_response:unregistered declaration_count=0 tools=none}
+Assistant tool failed (RuntimeError)
+Gemini request failed exception_class=ServerError http_status=503 provider_error_code=UNAVAILABLE request_id=None retry_after=None retry_delay=0.1s provider_detail_types=google.rpc.RetryInfo invalid_fields=- provider_error_category=unclassified_provider_error provider_error_field=- provider_message=Provider rejected the request (message redacted). model=gemini-2.5-flash sdk_version=2.34.0 request_stage=unspecified request_schema={content_count=1 roles=user parts=text declaration_count=0 tools=none}
+Assistant tool failed (AssessmentNotFoundError)
+Assistant tool failed (RuntimeError)
+Prisma transcription failed (timeout)
+Prisma transcription failed (http_status=429)
+Prisma transcription unavailable (credentials_not_configured)
+Prisma transcription failed (RuntimeError)
+Prisma transcription unavailable (unsupported_audio_format)
+Timbre v2.5 synthesis failed (http_status=401)
+Timbre v2.5 synthesis failed (http_status=403)
+Timbre v2.5 synthesis failed (http_status=429)
+Timbre v2.5 synthesis unavailable (credentials_not_configured)
+Timbre v2.5 synthesis failed (timeout)
+Timbre v2.5 synthesis failed (connection_error)
+Prisma transcription failed (RuntimeError)
+Prisma transcription unavailable (unsupported_audio_format)
+Prisma transcription failed (TimeoutError)
+Assistant tool failed (SupportCaseNotFoundError)
+======================================================================
+FAIL: test_english_conversational_slot_filling_three_steps (backend.test_conversational_support_assistant.ConversationalSupportAssistantTests.test_english_conversational_slot_filling_three_steps)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "C:\Users\cc402\OneDrive\Desktop\vaanishield\backend\test_conversational_support_assistant.py", line 104, in test_english_conversational_slot_filling_three_steps
+    self.assertEqual(
+AssertionError: "Here are your support ticket details for[343 chars]yet." != 'Here are the complaint details. Please r[23 chars]mit.'
++ Here are the complaint details. Please review them before I submit.- Here are your support ticket details for review:
+- - **Category:** Transaction
+- - **Subject:** UPI payment debited but not received by merchant
+- - **Priority:** HIGH
+- - **Amount:** \u20b92,500.00
+- - **Description:** Amount deducted from the customer's account, but merchant has not received payment.
+- 
+- Please confirm if you would like me to submit this ticket. No ticket has been created yet.
+
+======================================================================
+FAIL: test_hindi_conversational_slot_filling_three_steps (backend.test_conversational_support_assistant.ConversationalSupportAssistantTests.test_hindi_conversational_slot_filling_three_steps)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "C:\Users\cc402\OneDrive\Desktop\vaanishield\backend\test_conversational_support_assistant.py", line 169, in test_hindi_conversational_slot_filling_three_steps
+    self.assertIn("\u0909\u091a\u094d\u091a \u092a\u094d\u0930\u093e\u0925\u092e\u093f\u0915\u0924\u093e \u0915\u0947 \u0930\u0942\u092a \u092e\u0947\u0902 \u091a\u093f\u0939\u094d\u0928\u093f\u0924 \u0915\u0930\u0928\u093e \u091a\u093e\u0939\u0947\u0902\u0917\u0947?", res2.assistant_text)
+AssertionError: '\u0909\u091a\u094d\u091a \u092a\u094d\u0930\u093e\u0925\u092e\u093f\u0915\u0924\u093e \u0915\u0947 \u0930\u0942\u092a \u092e\u0947\u0902 \u091a\u093f\u0939\u094d\u0928\u093f\u0924 \u0915\u0930\u0928\u093e \u091a\u093e\u0939\u0947\u0902\u0917\u0947?' not found in 'Mock'
+
+======================================================================
+FAIL: test_kannada_conversational_slot_filling_three_steps (backend.test_conversational_support_assistant.ConversationalSupportAssistantTests.test_kannada_conversational_slot_filling_three_steps)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "C:\Users\cc402\OneDrive\Desktop\vaanishield\backend\test_conversational_support_assistant.py", line 137, in test_kannada_conversational_slot_filling_three_steps
+    self.assertIn("\u0cb9\u0cc6\u0c9a\u0ccd\u0c9a\u0cbf\u0ca8 \u0c86\u0ca6\u0ccd\u0caf\u0ca4\u0cc6\u0caf\u0cbe\u0c97\u0cbf \u0c97\u0cc1\u0cb0\u0cc1\u0ca4\u0cbf\u0cb8\u0cac\u0cc7\u0c95\u0cc7?", res2.assistant_text)
+AssertionError: '\u0cb9\u0cc6\u0c9a\u0ccd\u0c9a\u0cbf\u0ca8 \u0c86\u0ca6\u0ccd\u0caf\u0ca4\u0cc6\u0caf\u0cbe\u0c97\u0cbf \u0c97\u0cc1\u0cb0\u0cc1\u0ca4\u0cbf\u0cb8\u0cac\u0cc7\u0c95\u0cc7?' not found in 'Mock'
+
+======================================================================
+FAIL: test_speech_input_transcribes_and_persists_transcript_only (backend.test_speech_integration.SpeechIntegrationTests.test_speech_input_transcribes_and_persists_transcript_only)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "C:\Users\cc402\OneDrive\Desktop\vaanishield\backend\test_speech_integration.py", line 142, in test_speech_input_transcribes_and_persists_transcript_only
+    self.assertEqual(response.response_language, "en-IN")
+AssertionError: 'kn-IN' != 'en-IN'
+- kn-IN
+? ^
++ en-IN
+? ^
+
+
+======================================================================
+FAIL: test_requested_hindi_labels_are_preserved_and_english_engine_text_is_disclosed (backend.test_transaction_risk_assistant.TransactionRiskAssistantTests.test_requested_hindi_labels_are_preserved_and_english_engine_text_is_disclosed)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "C:\Users\cc402\OneDrive\Desktop\vaanishield\backend\test_transaction_risk_assistant.py", line 242, in test_requested_hindi_labels_are_preserved_and_english_engine_text_is_disclosed
+    self.assertEqual(response.response_language, "en-IN")
+AssertionError: 'hi-IN' != 'en-IN'
+- hi-IN
++ en-IN
+
+
+----------------------------------------------------------------------
+Ran 245 tests in 108.236s
+
+FAILED (failures=5)
+VaaniShield database initialized successfully!
+VaaniShield database initialized successfully!
+VaaniShield database initialized successfully!
+VaaniShield database initialized successfully!
+VaaniShield database initialized successfully!
+VaaniShield database initialized successfully!
+VaaniShield database initialized successfully!
+VaaniShield database initialized successfully!
+VaaniShield database initialized successfully!
+VaaniShield database initialized successfully!
+VaaniShield database initialized successfully!
+VaaniShield database initialized successfully!
+VaaniShield database initialized successfully!
+VaaniShield database initialized successfully!
+VaaniShield database initialized successfully!
+VaaniShield database initialized successfully!
+VaaniShield database initialized successfully!
+VaaniShield database initialized successfully!
+VaaniShield database initialized successfully!
+VaaniShield database initialized successfully!
+VaaniShield database initialized successfully!
+VaaniShield database initialized successfully!
+VaaniShield database initialized successfully!
+VaaniShield database initialized successfully!
+VaaniShield database initialized successfully!
+VaaniShield database initialized successfully!
+VaaniShield database initialized successfully!
+VaaniShield database initialized successfully!
+VaaniShield database initialized successfully!
+VaaniShield database initialized successfully!
+VaaniShield database initialized successfully!
+VaaniShield database initialized successfully!
+VaaniShield database initialized successfully!
+VaaniShield database initialized successfully!
+VaaniShield database initialized successfully!
+VaaniShield database initialized successfully!
+VaaniShield database initialized successfully!
+VaaniShield database initialized successfully!
+VaaniShield database initialized successfully!
+VaaniShield database initialized successfully!
+VaaniShield database initialized successfully!
+VaaniShield database initialized successfully!
+VaaniShield database initialized successfully!
+VaaniShield database initialized successfully!
+VaaniShield database initialized successfully!
+VaaniShield database initialized successfully!
+VaaniShield database initialized successfully!
+VaaniShield database initialized successfully!
+VaaniShield database initialized successfully!
+VaaniShield database initialized successfully!
+VaaniShield database initialized successfully!
+VaaniShield database initialized successfully!
+VaaniShield database initialized successfully!
+VaaniShield database initialized successfully!
+VaaniShield database initialized successfully!
+VaaniShield database initialized successfully!
+VaaniShield database initialized successfully!
+VaaniShield database initialized successfully!
+VaaniShield database initialized successfully!
+VaaniShield database initialized successfully!
+VaaniShield database initialized successfully!
+VaaniShield database initialized successfully!
+VaaniShield database initialized successfully!
+DETERMINISTIC_MOCK_LATENCY_BASELINE={"balance": {"cold_stage_ms": {"intent_classification": 2.85, "llm_generation": 0.0, "request_setup_and_persistence": 15.1, "response_formatting": 0.01, "response_persistence": 12.44, "tool:get_account_balance": 0.02, "tool_and_database": 0.02, "tool_selection": 0.05}, "first_request_ms": 34.46, "llm_round_duration_median_ms": 0.0, "llm_round_duration_p95_ms": 0.01, "llm_rounds_per_request": [2], "samples": 24, "warm_median_ms": 37.43, "warm_p95_ms": 39.38, "warm_stage_medians_ms": {"intent_classification": 3.13, "llm_generation": 0.0, "request_setup_and_persistence": 16.29, "response_formatting": 0.01, "response_persistence": 13.29, "tool:get_account_balance": 0.02, "tool_and_database": 0.02, "tool_selection": 0.05}}, "contextual_follow_up": {"cold_stage_ms": {"intent_classification": 2.88, "llm_generation": 0.0, "request_setup_and_persistence": 9.98, "response_formatting": 0.01, "response_persistence": 13.07, "tool:get_account_balance": 0.02, "tool_and_database": 0.02, "tool_selection": 0.05}, "first_request_ms": 30.55, "llm_round_duration_median_ms": 0.0, "llm_round_duration_p95_ms": 0.01, "llm_rounds_per_request": [2], "samples": 24, "warm_median_ms": 31.88, "warm_p95_ms": 42.07, "warm_stage_medians_ms": {"intent_classification": 2.94, "llm_generation": 0.0, "request_setup_and_persistence": 10.53, "response_formatting": 0.01, "response_persistence": 12.99, "tool:get_account_balance": 0.02, "tool_and_database": 0.02, "tool_selection": 0.05}}, "loans": {"cold_stage_ms": {"intent_classification": 3.95, "llm_generation": 0.0, "request_setup_and_persistence": 16.33, "response_formatting": 0.01, "response_persistence": 12.61, "tool:get_loan_details": 0.02, "tool_and_database": 0.02, "tool_selection": 0.05}, "first_request_ms": 37.1, "llm_round_duration_median_ms": 0.0, "llm_round_duration_p95_ms": 0.0, "llm_rounds_per_request": [2], "samples": 24, "warm_median_ms": 36.19, "warm_p95_ms": 42.9, "warm_stage_medians_ms": {"intent_classification": 2.73, "llm_generation": 0.0, "request_setup_and_persistence": 15.93, "response_formatting": 0.01, "response_persistence": 12.98, "tool:get_loan_details": 0.02, "tool_and_database": 0.02, "tool_selection": 0.05}}, "multi_balance_transactions_loans": {"cold_stage_ms": {"intent_classification": 2.61, "parallel_tool_execution": 1.05, "request_setup_and_persistence": 16.53, "response_formatting": 0.01, "response_persistence": 13.74, "tool:get_account_balance": 0.04, "tool:get_loan_details": 0.01, "tool:get_recent_transactions": 0.03, "tool_and_database": 0.08, "tool_selection": 0.05}, "first_request_ms": 38.66, "llm_round_duration_median_ms": null, "llm_round_duration_p95_ms": null, "llm_rounds_per_request": [0], "samples": 24, "warm_median_ms": 37.01, "warm_p95_ms": 39.64, "warm_stage_medians_ms": {"intent_classification": 2.77, "parallel_tool_execution": 1.01, "request_setup_and_persistence": 15.87, "response_formatting": 0.01, "response_persistence": 13.01, "tool:get_account_balance": 0.04, "tool:get_loan_details": 0.01, "tool:get_recent_transactions": 0.02, "tool_and_database": 0.07, "tool_selection": 0.05}}, "transactions": {"cold_stage_ms": {"intent_classification": 3.09, "llm_generation": 0.0, "request_setup_and_persistence": 15.4, "response_formatting": 0.01, "response_persistence": 13.2, "tool:get_recent_transactions": 0.02, "tool_and_database": 0.02, "tool_selection": 0.05}, "first_request_ms": 35.64, "llm_round_duration_median_ms": 0.0, "llm_round_duration_p95_ms": 0.0, "llm_rounds_per_request": [2], "samples": 24, "warm_median_ms": 36.65, "warm_p95_ms": 39.03, "warm_stage_medians_ms": {"intent_classification": 2.9, "llm_generation": 0.0, "request_setup_and_persistence": 16.19, "response_formatting": 0.01, "response_persistence": 13.09, "tool:get_recent_transactions": 0.02, "tool_and_database": 0.02, "tool_selection": 0.05}}}
+VaaniShield database initialized successfully!
+VaaniShield database initialized successfully!
+VaaniShield database initialized successfully!
+VaaniShield database initialized successfully!
+VaaniShield database initialized successfully!
+VaaniShield database initialized successfully!
+VaaniShield database initialized successfully!
+VaaniShield database initialized successfully!
+VaaniShield database initialized successfully!
+VaaniShield database initialized successfully!
+VaaniShield database initialized successfully!
+VaaniShield database initialized successfully!
+VaaniShield database initialized successfully!
+VaaniShield database initialized successfully!
+VaaniShield database initialized successfully!
+VaaniShield database initialized successfully!
+VaaniShield database initialized successfully!
+VaaniShield database initialized successfully!
+VaaniShield database initialized successfully!
+VaaniShield database initialized successfully!
+VaaniShield database initialized successfully!
+VaaniShield database initialized successfully!
+VaaniShield database initialized successfully!
+VaaniShield database initialized successfully!
+VaaniShield database initialized successfully!
+VaaniShield database initialized successfully!
+VaaniShield database initialized successfully!
+VaaniShield database initialized successfully!
+VaaniShield database initialized successfully!
+VaaniShield database initialized successfully!
+VaaniShield database initialized successfully!
+VaaniShield database initialized successfully!
+VaaniShield database initialized successfully!
+VaaniShield database initialized successfully!
+VaaniShield database initialized successfully!
+VaaniShield database initialized successfully!
+VaaniShield database initialized successfully!
+VaaniShield database initialized successfully!
+VaaniShield database initialized successfully!
+VaaniShield database initialized successfully!
+VaaniShield database initialized successfully!
+VaaniShield database initialized successfully!
+VaaniShield database initialized successfully!
+VaaniShield database initialized successfully!
+VaaniShield database initialized successfully!
+VaaniShield database initialized successfully!
+VaaniShield database initialized successfully!
+VaaniShield database initialized successfully!
+VaaniShield database initialized successfully!
+VaaniShield database initialized successfully!
+VaaniShield database initialized successfully!
+VaaniShield database initialized successfully!
+VaaniShield database initialized successfully!
+VaaniShield database initialized successfully!
+VaaniShield database initialized successfully!
+VaaniShield database initialized successfully!
+VaaniShield database initialized successfully!
+VaaniShield database initialized successfully!
+VaaniShield database initialized successfully!
+VaaniShield database initialized successfully!
+VaaniShield database initialized successfully!
+VaaniShield database initialized successfully!
+VaaniShield database initialized successfully!
+VaaniShield database initialized successfully!
+VaaniShield database initialized successfully!
+VaaniShield database initialized successfully!
+VaaniShield database initialized successfully!
+VaaniShield database initialized successfully!
+VaaniShield database initialized successfully!
+VaaniShield database initialized successfully!
+VaaniShield database initialized successfully!
+VaaniShield database initialized successfully!
+VaaniShield database initialized successfully!
+VaaniShield database initialized successfully!
+VaaniShield database initialized successfully!
+VaaniShield database initialized successfully!
+VaaniShield database initialized successfully!
+VaaniShield database initialized successfully!
+VaaniShield database initialized successfully!
+VaaniShield database initialized successfully!
+VaaniShield database initialized successfully!
+VaaniShield database initialized successfully!
+VaaniShield database initialized successfully!
+VaaniShield database initialized successfully!
+VaaniShield database initialized successfully!
+VaaniShield database initialized successfully!
+VaaniShield database initialized successfully!
+VaaniShield database initialized successfully!
+VaaniShield database initialized successfully!
+VaaniShield database initialized successfully!
+VaaniShield database initialized successfully!
+VaaniShield database initialized successfully!
+VaaniShield database initialized successfully!
+VaaniShield database initialized successfully!
+VaaniShield database initialized successfully!
+VaaniShield database initialized successfully!
+VaaniShield database initialized successfully!
+VaaniShield database initialized successfully!
+VaaniShield database initialized successfully!
+VaaniShield database initialized successfully!
+VaaniShield database initialized successfully!
+VaaniShield database initialized successfully!
+VaaniShield database initialized successfully!
+VaaniShield database initialized successfully!
+VaaniShield database initialized successfully!
+VaaniShield database initialized successfully!
+VaaniShield database initialized successfully!
+VaaniShield database initialized successfully!
+VaaniShield database initialized successfully!
+VaaniShield database initialized successfully!
+VaaniShield database initialized successfully!
+VaaniShield database initialized successfully!
+VaaniShield database initialized successfully!
+VaaniShield database initialized successfully!
+VaaniShield database initialized successfully!
+VaaniShield database initialized successfully!
+VaaniShield database initialized successfully!
+VaaniShield database initialized successfully!
+VaaniShield database initialized successfully!
+VaaniShield database initialized successfully!
+VaaniShield database initialized successfully!
+VaaniShield database initialized successfully!
+VaaniShield database initialized successfully!
+VaaniShield database initialized successfully!
+VaaniShield database initialized successfully!
+VaaniShield database initialized successfully!
+VaaniShield database initialized successfully!
+VaaniShield database initialized successfully!
+VaaniShield database initialized successfully!
+VaaniShield database initialized successfully!
+VaaniShield database initialized successfully!
+VaaniShield database initialized successfully!
+VaaniShield database initialized successfully!
+VaaniShield database initialized successfully!
+VaaniShield database initialized successfully!
+VaaniShield database initialized successfully!
+VaaniShield database initialized successfully!
+VaaniShield database initialized successfully!
+VaaniShield database initialized successfully!
+VaaniShield database initialized successfully!
+VaaniShield database initialized successfully!
+VaaniShield database initialized successfully!
+VaaniShield database initialized successfully!
+VaaniShield database initialized successfully!
+VaaniShield database initialized successfully!
+VaaniShield database initialized successfully!
+VaaniShield database initialized successfully!

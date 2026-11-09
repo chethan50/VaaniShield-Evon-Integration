@@ -496,17 +496,21 @@ with st.sidebar:
         st.markdown("**Voice Wake-Word**")
         wake_active = st.toggle(
             "Enable 'Hey Vaani' activation",
-            value=bool(st.session_state.get("wake_word_enabled", True)),
+            value=bool(st.session_state.get("wake_word_enabled", False)),
             key="sidebar_wake_word_toggle",
-            help="Browser-side local wake-word detection. Zero continuous cloud streaming.",
+            help="Allow the composer to offer hands-free mode. Start listening explicitly there.",
         )
         st.session_state["wake_word_enabled"] = wake_active
+        st.selectbox(
+            "Wake recognition mode", ("on_device", "browser_default"),
+            format_func=lambda mode: "Strict on-device" if mode == "on_device" else "Browser-default",
+            key="wake_recognition_mode",
+        )
+        if st.session_state.get("wake_recognition_mode") == "browser_default":
+            st.warning("Browser-default wake listening may send microphone audio, including speech before the wake phrase, to your browser's recognition provider.")
+            st.checkbox("I consent to browser-default wake recognition", key="wake_browser_consent")
         if wake_active:
-            st.caption("🎙️ Wake-word active. Say 'Hey Vaani' anytime or test below:")
-            if st.button("🎤 Activate 'Hey Vaani' (Voice Greeting)", key="btn_test_wake_voice", width="stretch", type="primary"):
-                st.session_state["assistant_open"] = True
-                st.session_state["wake_activated"] = True
-                st.rerun()
+            st.caption("Choose Start hands-free at the composer. Works only while this tab is active.")
 
     with st.popover("👤 Demo Profile", width="stretch"):
         st.markdown(f"**{profile_name}**")

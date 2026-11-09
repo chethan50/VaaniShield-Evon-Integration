@@ -1,16 +1,20 @@
 """Offline assistant submission, recovery, and optional TTS regressions."""
 
+import base64
 import unittest
 import inspect
+from uuid import uuid4
 from unittest.mock import MagicMock
 
 from frontend.api_client import APIError
 from frontend.pages.assistant import (
+    _handle_voice_event,
     _recover_interrupted_turn,
     _submit_recorded_audio,
     _submit,
     render,
 )
+from frontend.session_state import reset_conversation_state
 
 
 def response(*, speech=False):
@@ -350,6 +354,68 @@ class AssistantSubmissionTests(unittest.TestCase):
             self.api, self.st, self.state, audio, widget_epoch=1,
         ))
         self.assertEqual(self.api.upload_audio.call_count, 2)
+
+    def test_voice_event_diagnostics_reject_duplicates_even_after_conversation_reset_and_allow_new_event(self):
+        self.api.upload_audio.return_value = {"audio_upload_id": "upload-1"}
+        self.api.send_assistant_turn.return_value = response(speech=True)
+        self.api.fetch_audio.return_value = (b"RIFF\x00\x00\x00\x00WAVEfmt ", "audio/wav")
+        wav_b64 = base64.b64encode(b"RIFF\x04\x00\x00\x00WAVEfmt ").decode("ascii")
+        first_id = str(uuid4())
+        second_id = str(uuid4())
+
+        self.assertTrue(_handle_voice_event(
+            self.api, self.st, self.state,
+            {"id": first_id, "kind": "audio", "audio": wav_b64},
+        ))
+        # Duplicate delivery of the same component event is rejected and logged.
+        self.assertFalse(_handle_voice_event(
+            self.api, self.st, self.state,
+            {"id": first_id, "kind": "audio", "audio": wav_b64},
+        ))
+        # Resetting conversation state must keep processed voice IDs so a mounted
+        # component's last value is not re-submitted as a new turn.
+        reset_conversation_state(self.state)
+        self.state["conversation_id"] = "conversation-2"
+        self.assertFalse(_handle_voice_event(
+            self.api, self.st, self.state,
+            {"id": first_id, "kind": "audio", "audio": wav_b64},
+        ))
+        # A later separate recording with a new event_id is accepted cleanly.
+        self.assertTrue(_handle_voice_event(
+            self.api, self.st, self.state,
+            {"id": second_id, "kind": "audio", "audio": wav_b64},
+        ))
+
+        self.assertEqual(self.api.upload_audio.call_count, 2)
+        self.assertEqual(self.api.send_assistant_turn.call_count, 2)
+        first_stages = [
+            d["stage"] for d in self.state["voice_diagnostics"]
+            if d["event_id"] == first_id
+        ]
+        self.assertEqual(first_stages, [
+            "component_event_received",
+            "upload_started",
+            "upload_completed",
+            "assistant_turn_started",
+            "assistant_turn_completed",
+            "response_playback_queued",
+            "duplicate_event_rejected",
+            "duplicate_event_rejected",
+        ])
+        second_stages = [
+            d["stage"] for d in self.state["voice_diagnostics"]
+            if d["event_id"] == second_id
+        ]
+        self.assertEqual(second_stages, [
+            "component_event_received",
+            "upload_started",
+            "upload_completed",
+            "assistant_turn_started",
+            "assistant_turn_completed",
+            "response_playback_queued",
+        ])
+        for entry in self.state["voice_diagnostics"]:
+            self.assertEqual(set(entry.keys()) - {"stage", "event_id", "kind"}, set())
 
 
 if __name__ == "__main__":

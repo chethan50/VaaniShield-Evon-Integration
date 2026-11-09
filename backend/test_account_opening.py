@@ -736,14 +736,14 @@ class AccountOpeningTests(unittest.TestCase):
             make_turn_request("Review and submit my application", conversation_id=conv_id),
         )
         self.assertEqual(
-            turn5.tool_results[0].tool_name, "prepare_account_application_submission"
+            turn5.tool_results[0].tool_name, "validate_account_application"
         )
         self.assertEqual(
             turn5.tool_results[0].data["ui_navigation"]["subfeature"], "Review & Submit"
         )
-        # Ensure Vaani AI did NOT submit the application; status is PENDING_CONFIRMATION
+        # Review navigation does not prepare or submit the application.
         current_after_review = get_application(self.arjun, ref)
-        self.assertEqual(current_after_review["status"], "PENDING_CONFIRMATION")
+        self.assertEqual(current_after_review["status"], "DRAFT")
 
         # Step 6 (Voice): Ask for application status over voice
         turn6 = orchestrator.process_turn(

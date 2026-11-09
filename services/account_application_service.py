@@ -454,6 +454,7 @@ def _detail(conn, row, *, include_personal):
             "media_type": doc["media_type"] if doc else None,
             "size_bytes": doc["size_bytes"] if doc else None,
             "uploaded_at": doc["uploaded_at"] if doc else None,
+            "verification_status": "NOT_VERIFIED" if doc else "NOT_UPLOADED",
         })
     result = {
         "application_ref": row["application_ref"],
@@ -610,11 +611,6 @@ def start_application(principal, account_type=None, *, include_personal=True):
                     )
                     row = conn.execute("SELECT * FROM account_applications WHERE application_ref = ?", (ref,)).fetchone()
                     _event(conn, row, owner, "CREATED", "Draft application started.", profile)
-                elif account_type is not None and row["account_type"] != account_type:
-                    _invalidate_review(conn, row, owner, "Account type changed after review.")
-                    _apply_changes(conn, row, owner, {"account_type": account_type})
-                    row = conn.execute("SELECT * FROM account_applications WHERE application_id = ?", (row["application_id"],)).fetchone()
-                    _event(conn, row, owner, "UPDATED", "Account type selected.", profile)
                 detail = _detail(conn, row, include_personal=include_personal)
             detail["resumed"] = resumed
             return detail
@@ -771,6 +767,13 @@ def store_document(principal, application_ref, document_type, content, declared_
                 "SELECT * FROM account_application_documents WHERE application_id = ? AND document_type = ?",
                 (row["application_id"], document_type),
             ).fetchone()
+            if (existing is not None
+                    and existing["content_sha256"] == hashlib.sha256(content).hexdigest()
+                    and _document_is_intact(existing)):
+                # A retry of the same upload must not replace the document or
+                # invalidate a review of identical content.
+                path.unlink(missing_ok=True)
+                return _detail(conn, row, include_personal=True)
             if existing is not None:
                 old_path = _document_path(existing["storage_id"], existing["media_type"])
                 conn.execute("DELETE FROM account_application_documents WHERE document_id = ?", (existing["document_id"],))
@@ -921,9 +924,18 @@ def submit_application(
     principal, application_ref, *, confirmed, confirmation_method, review_digest,
 ):
     """Submit after explicit, authenticated button confirmation. Idempotent."""
-    owner, profile = _owner(principal)
     if confirmed is not True or confirmation_method != "button":
         raise ApplicationConflict("Explicit button confirmation is required to submit.")
+    return _submit_reviewed_application(principal, application_ref, review_digest, "button")
+
+
+def submit_application_from_conversation(principal, application_ref, *, user_text, input_mode, review_digest):
+    """Submission is restricted to the existing Review & Submit page."""
+    raise ApplicationConflict("Review and submit the application on the Review & Submit page.")
+
+
+def _submit_reviewed_application(principal, application_ref, review_digest, confirmation_method):
+    owner, profile = _owner(principal)
     with _transaction() as conn:
         row = _find(conn, owner, application_ref)
         if row["status"] == "SUBMITTED":
@@ -952,7 +964,7 @@ def submit_application(
         )
         if cursor.rowcount != 1:
             raise ApplicationConflict("The application could not be submitted.")
-        _event(conn, row, owner, "SUBMITTED", "Application submitted after customer confirmation.", profile)
+        _event(conn, row, owner, "SUBMITTED", f"Application submitted after explicit {confirmation_method} confirmation.", profile)
         return {
             "application_ref": row["application_ref"],
             "status": "SUBMITTED",

@@ -2,8 +2,10 @@
 
 from __future__ import annotations
 
+import base64
 import hashlib
-from uuid import UUID
+import logging
+from uuid import UUID, uuid4
 
 from frontend.api_client import (
     APIError,
@@ -16,13 +18,30 @@ from frontend.components.conversation import (
     render_messages,
 )
 from frontend.components.conversation_history import create_new_conversation
-from frontend.components.voice_composer import render_language_controls, render_voice_input
+from frontend.components.voice_composer import render_language_controls, render_compact_voice, decode_voice_event
 from frontend.navigation import FEATURE_SUBFEATURES, request_navigation
 from frontend.session_state import (
     bind_pending_scam_assessment,
     clear_pending_scam_assessment,
     sign_out,
 )
+
+_voice_log = logging.getLogger(__name__ + ".voice")
+
+
+def _record_voice_diagnostic(state, stage: str, event_id: str | None = None, kind: str | None = None) -> None:
+    """Record privacy-safe voice lifecycle stages without transcripts, audio, or PII."""
+    entry = {"stage": stage, "event_id": str(event_id) if event_id else None}
+    if kind:
+        entry["kind"] = str(kind)
+    diagnostics = state.setdefault("voice_diagnostics", [])
+    diagnostics.append(entry)
+    if len(diagnostics) > 100:
+        del diagnostics[:-100]
+    if kind:
+        _voice_log.info("voice stage=%s event_id=%s kind=%s", stage, event_id, kind)
+    else:
+        _voice_log.info("voice stage=%s event_id=%s", stage, event_id)
 
 
 _SCAM_FOLLOW_UP_TERMS = (
@@ -157,6 +176,9 @@ def _remember_failed_user_message(state, failed):
 
 
 def _send_turn(api, state, payload):
+    is_voice_turn = payload.get("input_mode") == "speech" or bool(state.get("active_voice_component_event"))
+    if is_voice_turn:
+        _record_voice_diagnostic(state, "assistant_turn_started", payload.get("client_turn_id"), payload.get("input_mode"))
     try:
         response = api.send_assistant_turn(payload)
     except APIError as exc:
@@ -171,6 +193,9 @@ def _send_turn(api, state, payload):
             else:
                 exc = None
         if exc is not None:
+            error_code = (exc.payload or {}).get("error_code") if isinstance(exc.payload, dict) else None
+            if isinstance(error_code, str) and (error_code.startswith("SPEECH_") or error_code in {"EMPTY_TRANSCRIPT", "AUDIO_UPLOAD_UNAVAILABLE"}):
+                failed["needs_audio_upload"] = True
             if exc.status_code == 0 or (exc.status_code == 409 and any(
                 term in str(exc).casefold() for term in ("already processing", "in progress")
             )):
@@ -196,6 +221,8 @@ def _send_turn(api, state, payload):
         state["assistant_failed_turn"] = failed
         _remember_failed_user_message(state, failed)
         raise APIError(502, message)
+    if is_voice_turn:
+        _record_voice_diagnostic(state, "assistant_turn_completed", payload.get("client_turn_id"), payload.get("input_mode"))
     application_error = response.get("error") or response.get("error_code")
     if application_error or not all(response.get(key) for key in (
         "conversation_id", "turn_id", "assistant_text",
@@ -237,14 +264,16 @@ def _submit_recorded_audio(api, st, state, audio, *, widget_epoch=None):
     if not raw:
         st.warning("No audio was captured. Try recording again.")
         return False
+    event_id = state.get("active_voice_component_event")
     digest = hashlib.sha256(raw).hexdigest()
     widget_epoch = int(state.get("audio_widget_epoch", 0) if widget_epoch is None else widget_epoch)
-    submission_key = (widget_epoch, digest)
+    submission_key = (event_id, digest) if event_id else (widget_epoch, digest)
     if (
         submission_key == state.get("last_audio_submission_key")
         or state.get("assistant_submission_in_progress")
         or widget_epoch != int(state.get("audio_widget_epoch", 0))
     ):
+        _record_voice_diagnostic(state, "duplicate_event_rejected", event_id, "audio")
         return False
     state["last_audio_submission_key"] = submission_key
     state["last_audio_hash"] = digest
@@ -263,7 +292,7 @@ def _submit_once(api, st, state, *, text=None, audio=None, retry=False):
     _ensure_conversation(api, state)
     mode = state.get("response_mode", "text")
     if (
-        audio is not None
+        (audio is not None or state.get("active_voice_component_event"))
         and mode == "text"
         and not state.get("response_mode_explicit", False)
     ):
@@ -293,6 +322,16 @@ def _submit_once(api, st, state, *, text=None, audio=None, retry=False):
         mode = payload.get("output_mode", mode)
         text = (failed_turn or {}).get("text")
         assessment_id = payload.get("scam_assessment_id")
+        # A failed STT request consumed its short-lived upload. Retry with the
+        # same turn identity and a fresh upload, held only in session memory.
+        if (failed_turn or {}).get("needs_audio_upload") and state.get("voice_retry_audio"):
+            recording = state["voice_retry_audio"]
+            _record_voice_diagnostic(state, "upload_started", payload.get("client_turn_id"), "audio_retry")
+            uploaded = api.upload_audio(recording["name"], recording["raw"], recording["type"])
+            _record_voice_diagnostic(state, "upload_completed", payload.get("client_turn_id"), "audio_retry")
+            payload = {**payload, "audio_upload_id": uploaded["audio_upload_id"]}
+            state["assistant_retry_payload"] = payload
+            failed_turn["needs_audio_upload"] = False
         response = _send_turn_with_spinner(api, st, state, payload)
     elif audio is not None:
         # A new recording starts a new assistant input flow. We cannot inspect
@@ -302,29 +341,49 @@ def _submit_once(api, st, state, *, text=None, audio=None, retry=False):
         if not raw:
             st.warning("No audio was captured. Try recording again.")
             return
-        with st.status("Processing voice…", expanded=False) as voice_status:
-            uploaded = api.upload_audio(
-                getattr(audio, "name", "question.wav") or "question.wav",
-                raw,
-                getattr(audio, "type", None) or "audio/wav",
-            )
-            payload = build_speech_turn_request(
-                state["conversation_id"], uploaded["audio_upload_id"], mode,
-                state["language_hint"], response_language,
-                attachments=attachments_payload,
-            )
-            state["assistant_retry_payload"] = payload
-            state["assistant_failed_turn"] = {
-                "client_turn_id": payload["client_turn_id"],
-                "text": "Voice message (transcript will be restored from the saved turn)",
-                "is_voice": True,
-                "error": None,
-                "status": "processing",
-                "recovery_attempted": False,
-            }
+        state["voice_retry_audio"] = {
+            "raw": raw, "name": getattr(audio, "name", "question.wav") or "question.wav",
+            "type": getattr(audio, "type", None) or "audio/wav",
+        }
+        # Establish the turn identity before upload so a failed upload can be
+        # retried deliberately without creating a different assistant turn.
+        payload = build_speech_turn_request(
+            state["conversation_id"], str(uuid4()), mode,
+            state["language_hint"], response_language,
+            attachments=attachments_payload,
+        )
+        if state.get("active_voice_component_event"):
+            payload["client_turn_id"] = state["active_voice_component_event"]
+        _bind_account_review(state, payload)
+        state["assistant_retry_payload"] = payload
+        state["assistant_failed_turn"] = {
+            "client_turn_id": payload["client_turn_id"],
+            "text": "Voice message (transcript will be restored from the saved turn)",
+            "is_voice": True, "error": None, "status": "processing",
+            "recovery_attempted": False, "needs_audio_upload": True,
+        }
+        with st.status("Uploading voice audio…", expanded=False) as voice_status:
+            state["voice_processing_stage"] = "upload"
+            _record_voice_diagnostic(state, "upload_started", payload["client_turn_id"], "audio")
+            try:
+                uploaded = api.upload_audio(
+                    getattr(audio, "name", "question.wav") or "question.wav",
+                    raw,
+                    getattr(audio, "type", None) or "audio/wav",
+                )
+            except APIError:
+                state["assistant_failed_turn"].update(status="failed", error="Audio upload failed. Retry this message.")
+                raise
+            state["voice_processing_stage"] = "assistant"
+            _record_voice_diagnostic(state, "upload_completed", payload["client_turn_id"], "audio")
+            voice_status.update(label="Transcribing and preparing assistant response…", state="running", expanded=False)
+            payload["audio_upload_id"] = uploaded["audio_upload_id"]
+            state["assistant_failed_turn"]["needs_audio_upload"] = False
             response = _send_turn(api, state, payload)
+            state.pop("voice_processing_stage", None)
             voice_status.update(label="Voice response ready", state="complete", expanded=False)
     else:
+        state.pop("voice_retry_audio", None)
         assessment_id = assessment_reference_for_text(
             state, state["conversation_id"], text,
         )
@@ -334,6 +393,9 @@ def _submit_once(api, st, state, *, text=None, audio=None, retry=False):
             scam_assessment_id=assessment_id,
             attachments=attachments_payload,
         )
+        if state.get("active_voice_component_event"):
+            payload["client_turn_id"] = state["active_voice_component_event"]
+        _bind_account_review(state, payload)
         state["assistant_retry_payload"] = payload
         state["assistant_failed_turn"] = {
             "client_turn_id": payload["client_turn_id"],
@@ -368,6 +430,7 @@ def _submit_once(api, st, state, *, text=None, audio=None, retry=False):
         item for item in messages if item.get("id") not in existing_message_ids
     )
     state["assistant_retry_payload"] = None
+    state.pop("voice_retry_audio", None)
     state["assistant_failed_turn"] = None
     assessment = response.get("scam_assessment")
     if isinstance(assessment, dict) and assessment.get("assessment_id"):
@@ -388,6 +451,9 @@ def _submit_once(api, st, state, *, text=None, audio=None, retry=False):
                 target_feat = "Banking Information"
             elif subfeat in FEATURE_SUBFEATURES.get("Account Opening Assistant", ()):
                 target_feat = "Account Opening Assistant"
+            if target_feat == "Account Opening Assistant":
+                state["account_application_cache"] = None
+                continue
             if target_feat and subfeat:
                 request_navigation(
                     state, target_feat, subfeat, step=nav.get("step"),
@@ -417,7 +483,62 @@ def _submit_once(api, st, state, *, text=None, audio=None, retry=False):
             # The assistant turn and its text are already saved locally. A
             # playback retrieval problem is optional and must not fail the turn.
             st.warning("Your text response is ready, but its audio could not be loaded.")
+    event_id = state.pop("active_voice_component_event", None)
+    if event_id:
+        cached_audio = state["audio_cache"].get(audio_message["id"])
+        state["voice_component_response"] = {
+            "id": event_id,
+            "audio": base64.b64encode(cached_audio).decode("ascii") if cached_audio else None,
+            "media_type": audio_message.get("speech_media_type", "audio/wav"),
+        }
+        if cached_audio:
+            _record_voice_diagnostic(state, "response_playback_queued", event_id, "audio")
+        state["autoplay_audio_id"] = None
     st.rerun()
+
+
+def _bind_account_review(state, payload):
+    binding = state.get("account_review_for_turn")
+    if (isinstance(binding, dict) and not payload.get("attachments")
+            and binding.get("conversation_id") == str(state.get("conversation_id"))):
+        payload["account_review"] = {key: binding[key] for key in ("application_ref", "review_digest")}
+
+
+def _handle_voice_event(api, st, state, event):
+    event_id = event.get("id")
+    processed = state.setdefault("voice_component_processed_ids", set())
+    try:
+        event_id = str(UUID(str(event_id)))
+        if event_id in processed or event_id == state.get("voice_component_event_id"):
+            _record_voice_diagnostic(state, "duplicate_event_rejected", event_id, event.get("kind"))
+            return False
+        if event.get("kind") not in {"wake", "audio"}:
+            raise ValueError("Unknown voice event.")
+        processed.add(event_id)
+        _record_voice_diagnostic(state, "component_event_received", event_id, event["kind"])
+        state["voice_component_event_id"] = event_id
+        state["active_voice_component_event"] = event_id
+        if event["kind"] == "wake":
+            _submit(api, st, state, text="Hey Vaani")
+        else:
+            _submit_recorded_audio(api, st, state, decode_voice_event(event))
+        return True
+    except (APIError, ValueError) as exc:
+        state.pop("active_voice_component_event", None)
+        stage = state.pop("voice_processing_stage", None)
+        code = (exc.payload or {}).get("error_code", "") if isinstance(exc, APIError) and isinstance(exc.payload, dict) else ""
+        if stage == "upload":
+            message = "Audio upload failed. Check your connection and record again."
+        elif isinstance(code, str) and (code.startswith("SPEECH_") or code in {"EMPTY_TRANSCRIPT", "AUDIO_UPLOAD_UNAVAILABLE"}):
+            message = "Transcription failed. Use Retry this message or record again."
+        else:
+            message = "Voice request failed. Use Retry this message or record again."
+        state["voice_component_response"] = {"id": event_id, "error": True, "message": message}
+        if isinstance(exc, APIError):
+            _api_error(st, state, exc)
+        else:
+            st.warning(str(exc))
+        st.rerun()
 
 
 def _recover_interrupted_turn(api, st, state):
@@ -486,6 +607,9 @@ def _handle_file_upload(st, api, state, uploaded_file, is_image: bool = False):
 
 
 def render(st, api, state, *, compact=False):
+    # Capture what the user saw BEFORE this interaction refreshes the review.
+    binding = state.get("account_chat_confirmation")
+    state["account_review_for_turn"] = dict(binding) if isinstance(binding, dict) else None
     customer = state.get("customer") or {}
     if compact:
         st.caption("Speak or type in Kannada, English, Hindi, or a code-mixed conversation.")
@@ -531,6 +655,15 @@ def render(st, api, state, *, compact=False):
             st.warning(str(exc))
 
     with st.container(key="copilot-chat-scroll-area"):
+        submitted = state.get("account_application_last_submitted")
+        submitted_ref = state.get("account_chat_submitted_ref") or (submitted.get("application_ref") if isinstance(submitted, dict) else None)
+        if submitted_ref:
+            try:
+                status = api.get_account_application_status(application_ref=submitted_ref)
+                if status.get("found") and status.get("status") == "SUBMITTED":
+                    st.success(f"Application {status['application_ref']} was submitted to the demo workflow. No account has been opened.")
+            except APIError:
+                st.caption("Application submission status is temporarily unavailable.")
         render_messages(st, state["conversation_messages"], state, api=api)
         failed_turn = state.get("assistant_failed_turn")
         if failed_turn and state.get("assistant_retry_payload"):
@@ -616,6 +749,12 @@ def render(st, api, state, *, compact=False):
 
     # Prominent Sticky Composer at bottom of Copilot
     with st.container(key="copilot-sticky-composer"):
+        if state.get("kyc_chat_receipt"):
+            st.caption(state["kyc_chat_receipt"])
+            chat_application = state.get("kyc_chat_application")
+            if isinstance(chat_application, dict) and chat_application.get("application_ref"):
+                from frontend.components.account_application_chat import render_application_review
+                render_application_review(st, api, state, chat_application["application_ref"], "kyc-upload")
         pending_attachments = state.get("pending_attachments") or []
         if pending_attachments:
             st.markdown("<div class='composer-attachments-preview'>", unsafe_allow_html=True)
@@ -640,24 +779,8 @@ def render(st, api, state, *, compact=False):
                         st.rerun()
             st.markdown("</div>", unsafe_allow_html=True)
 
-        with st.container(key="copilot-voice-tray"):
-            recording_epoch = int(state.get("audio_widget_epoch", 0))
-            recording = render_voice_input(
-                st, recording_epoch, key_prefix="copilot",
-            )
-            if recording is not None:
-                try:
-                    _submit_recorded_audio(
-                        api, st, state, recording, widget_epoch=recording_epoch,
-                    )
-                except APIError as exc:
-                    _api_error(st, state, exc)
-                    st.rerun()
-                except ValueError as exc:
-                    st.warning(str(exc))
-
         with st.container(key="copilot-composer-pill"):
-            c_plus, c_input, c_send = st.columns([0.45, 3.4, 0.45])
+            c_plus, c_input, c_mic, c_send = st.columns([0.45, 3.0, 0.5, 0.45])
 
             with c_plus:
                 popover_key = f"composer_actions_popover_{state.get('composer_menu_epoch', 0)}"
@@ -675,6 +798,9 @@ def render(st, api, state, *, compact=False):
                                 sign_out(state)
                                 st.rerun()
                             st.error("The conversation could not be created. Please try again.")
+
+                    from frontend.components.account_application_chat import render_kyc_upload
+                    render_kyc_upload(st, api, state)
 
                     st.divider()
                     st.markdown("<div class='popover-action-title'>📄 Add files</div>", unsafe_allow_html=True)
@@ -711,6 +837,9 @@ def render(st, api, state, *, compact=False):
                     height=38,
                     disabled=bool(state.get("assistant_submission_in_progress")),
                 )
+
+            with c_mic:
+                voice_event = render_compact_voice(state)
 
             with c_send:
                 send_clicked = st.button("➤", key="copilot_send_button", type="primary", help="Send message")
@@ -779,6 +908,9 @@ def render(st, api, state, *, compact=False):
             """.replace("__COMPOSER_RENDER_TOKEN__", str(state.get("input_epoch", 0))),
             height=0,
         )
+
+        if isinstance(voice_event, dict):
+            _handle_voice_event(api, st, state, voice_event)
 
         if send_clicked:
             submitted_text = (entered_text or "").strip()

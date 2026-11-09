@@ -58,7 +58,8 @@ def post_assistant_turn(
             "TURN_IN_PROGRESS": 409,
         }
         raise HTTPException(
-            status_code=status_by_code.get(exc.code, 503), detail=str(exc)
+            status_code=status_by_code.get(exc.code, 503), detail=str(exc),
+            headers={"X-Vaani-Error-Code": exc.code},
         ) from None
 
 

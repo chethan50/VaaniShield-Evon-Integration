@@ -224,9 +224,12 @@ def messages_from_turn_response(response: dict, input_text: str | None = None):
     turn_id = response.get("turn_id") or str(uuid4())
     conversation_id = response.get("conversation_id")
     ui_navigation = None
+    account_review = None
     for item in response.get("tool_results") or []:
         if isinstance(item, dict) and isinstance((item.get("data") or {}).get("ui_navigation"), dict):
             ui_navigation = item["data"]["ui_navigation"]
+        if isinstance(item, dict) and isinstance((item.get("data") or {}).get("account_review"), dict):
+            account_review = item["data"]["account_review"]
     assistant_msg = {
         "id": f"assistant-{turn_id}",
         "role": "assistant",
@@ -242,6 +245,7 @@ def messages_from_turn_response(response: dict, input_text: str | None = None):
         "conversation_id": conversation_id,
         "scam_assessment": response.get("scam_assessment"),
         "pending_action": response.get("pending_action"),
+        "account_review": account_review,
         "support_close_confirmation": response.get("support_close_confirmation"),
         "turn_id": turn_id,
     }
@@ -710,15 +714,36 @@ def render_messages(st, messages: list[dict], state, api=None):
             if role == "assistant" and isinstance(message.get("ui_navigation"), dict):
                 nav = message["ui_navigation"]
                 subfeature = nav.get("subfeature")
-                if subfeature:
+                show_navigation = bool(subfeature)
+                if subfeature == "Review & Submit":
+                    ref = nav.get("application_ref")
+                    show_navigation = False
+                    if api is not None and ref:
+                        try:
+                            from services.account_application_assistant import _ready_for_review
+                            current = api.get_account_application(ref)
+                            show_navigation = current.get("status") != "SUBMITTED" and _ready_for_review(current)
+                        except (APIError, ValueError):
+                            st.caption("Application readiness is temporarily unavailable.")
+                if show_navigation:
                     nav_label = f"Go to {subfeature}"
-                    if st.button(
-                        nav_label,
-                        key=f"nav-{message.get('id')}-{subfeature}",
-                    ):
+                    if st.button(nav_label, key=f"nav-{message.get('id')}-{subfeature}"):
                         from frontend.navigation import request_navigation
+                        if subfeature == "Review & Submit":
+                            ref = nav["application_ref"]
+                            try:
+                                from services.account_application_assistant import _ready_for_review
+                                current = api.get_account_application(ref)
+                            except (APIError, ValueError):
+                                st.warning("The application could not be checked. Please try again.")
+                                continue
+                            if not _ready_for_review(current) or current.get("status") == "SUBMITTED":
+                                st.warning("The application has changed. Ask Vaani to check it again.")
+                                continue
+                            state["account_application_selected_ref"] = ref
+                            state["account_application_review_target_ref"] = ref
                         request_navigation(
-                            state, "Banking Information", subfeature, step=nav.get("step"),
+                            state, "Account Opening Assistant" if nav.get("target") == "account_services" else "Banking Information", subfeature, step=nav.get("step"),
                         )
                         st.rerun()
             if role == "assistant" and message.get("support_submitted_ticket_ref"):
@@ -736,6 +761,11 @@ def render_messages(st, messages: list[dict], state, api=None):
                     _render_investigation_action(st, message.get("pending_action"), api, state)
                 else:
                     _render_support_action(st, message, api, state)
+
+
+            if role == "assistant" and api and message.get("account_review"):
+                from frontend.components.account_application_chat import render_application_review
+                render_application_review(st, api, state, message["account_review"]["application_ref"], message["id"])
 
             # Deletion is explicit and server-side. The backend soft-deletes
             # only this turn and cancels actions bound to its originating turn.

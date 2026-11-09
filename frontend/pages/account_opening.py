@@ -440,7 +440,7 @@ def _render_kyc_documents(st, api, state, current_app: dict | None):
                                 ref, doc_type, sample_bytes, "application/pdf",
                             )
                             state["account_application_cache"] = updated
-                            st.success(f"Synthetic {label} sample uploaded and verified.")
+                            st.success(f"Synthetic {label} sample uploaded. It has not been verified.")
                             st.rerun()
                         except APIError as exc:
                             _handle_api_error(st, state, exc)
@@ -459,7 +459,7 @@ def _render_kyc_documents(st, api, state, current_app: dict | None):
                             ref, doc_type, raw, media_type,
                         )
                         state["account_application_cache"] = updated
-                        st.success(f"{label} uploaded and verified.")
+                        st.success(f"{label} uploaded. It has not been verified.")
                         st.rerun()
                     except APIError as exc:
                         _handle_api_error(st, state, exc)
@@ -519,7 +519,7 @@ def _render_review_and_submit(st, api, state, current_app: dict | None):
         ("Residential Address", fields.get("address_line") or "—"),
         ("City, State & PIN", city_state_pin),
         ("Nominee Details", nominee_display),
-        ("Verified Demo KYC", kyc_display),
+        ("Uploaded Demo KYC (not verified)", kyc_display),
         ("Workflow Status", status),
     ]
     grid_cells = "".join(
@@ -589,6 +589,8 @@ def _render_review_and_submit(st, api, state, current_app: dict | None):
                         ref, confirmed=True, review_digest=review_digest,
                     )
                     state["account_application_last_submitted"] = submitted_app
+                    state["account_chat_submitted_ref"] = submitted_app.get("application_ref")
+                    state["account_application_review_target_ref"] = None
                     state["account_application_cache"] = None
                     state["account_application_review_digest"] = None
                     state["account_application_selected_ref"] = submitted_app.get("application_ref")
@@ -678,6 +680,12 @@ def render(st, subfeature: str, api, state):
         _handle_api_error(st, state, exc)
         return
 
+    review_target = state.get("account_application_review_target_ref")
+    if subfeature == "Review & Submit" and review_target and (
+        not current_app or current_app.get("application_ref") != review_target
+    ):
+        st.warning("The requested application is no longer the active draft. Check Track Applications before continuing.")
+        return
     _render_step_header(st, state, subfeature, current_app)
 
     if subfeature == "Open New Account":
